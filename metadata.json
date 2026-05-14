@@ -1,0 +1,8 @@
+{
+  "name": "IntervAI",
+  "description": "Premium AI-powered interview preparation platform featuring mock interviews, real-time feedback, and performance analytics.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}

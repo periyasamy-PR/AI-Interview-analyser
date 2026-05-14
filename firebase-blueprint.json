@@ -1,0 +1,86 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Public and private user data",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "stats": {
+          "type": "object",
+          "properties": {
+            "totalInterviews": { "type": "number" },
+            "avgScore": { "type": "number" },
+            "completedQuizzes": { "type": "number" }
+          }
+        }
+      }
+    },
+    "MockInterview": {
+      "title": "Mock Interview Session",
+      "description": "Session data for an AI mock interview",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string" },
+        "company": { "type": "string" },
+        "difficulty": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "completed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "feedback": {
+          "type": "object",
+          "properties": {
+            "overallScore": { "type": "number" },
+            "communicationScore": { "type": "number" },
+            "topStrengths": { "type": "array", "items": { "type": "string" } },
+            "weakAreas": { "type": "array", "items": { "type": "string" } },
+            "generalAdvice": { "type": "string" }
+          }
+        }
+      }
+    },
+    "InterviewMessage": {
+      "title": "Interview Message",
+      "description": "A single message in an interview session",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["ai", "user"] },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Quiz": {
+      "title": "Technical Quiz",
+      "description": "Summary of a completed quiz",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "category": { "type": "string" },
+        "score": { "type": "number" },
+        "total": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile data"
+    },
+    "/interviews/{interviewId}": {
+      "schema": "MockInterview",
+      "description": "Mock interview session"
+    },
+    "/interviews/{interviewId}/messages/{messageId}": {
+      "schema": "InterviewMessage",
+      "description": "Messages within an interview"
+    },
+    "/quizzes/{quizId}": {
+      "schema": "Quiz",
+      "description": "Completed quiz records"
+    }
+  }
+}
