@@ -18,6 +18,7 @@ export default function Interview() {
   const [interview, setInterview] = useState<MockInterview | null>(null);
   const [messages, setMessages] = useState<InterviewMessage[]>([]);
   const [inputText, setInputText] = useState('');
+  const [interimText, setInterimText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isTTSActive, setIsTTSActive] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -25,6 +26,7 @@ export default function Interview() {
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [showMobileSidebar, setShowMobileSidebar] = useState<'info' | 'analytics' | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const latestInterimRef = useRef('');
 
   // Speech Recognition
   const recognitionRef = useRef<any>(null);
@@ -51,17 +53,56 @@ export default function Interview() {
     });
 
     // Initialize Speech Recognition
-    if ('webkitSpeechRecognition' in window) {
-      const recognition = new (window as any).webkitSpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      
+      recognition.onstart = () => {
+        setIsRecording(true);
+        latestInterimRef.current = '';
+      };
+
       recognition.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        setInputText(transcript);
+        let finalTrans = '';
+        let interimTrans = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTrans += event.results[i][0].transcript;
+          } else {
+            interimTrans += event.results[i][0].transcript;
+          }
+        }
+        
+        if (finalTrans) {
+          setInputText(prev => (prev + (prev ? ' ' : '') + finalTrans).trim());
+        }
+        setInterimText(interimTrans);
+        latestInterimRef.current = interimTrans;
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        if (event.error === 'not-allowed') {
+          alert('Microphone access denied. Please allow microphone permissions in your browser. (Also check your system/OS settings).');
+        } else if (event.error !== 'no-speech') {
+          // If it's a network, audio-capture, or unrecognized error, alert the user so they know it's a browser/OS issue.
+          alert(`Speech recognition failed: ${event.error}. Please ensure you are using Google Chrome, check your microphone settings, and ensure your internet connection doesn't block Google's speech services.`);
+        }
         setIsRecording(false);
       };
-      recognition.onerror = () => setIsRecording(false);
-      recognition.onend = () => setIsRecording(false);
+
+      recognition.onend = () => {
+        setIsRecording(false);
+        setInterimText('');
+        if (latestInterimRef.current) {
+          setInputText(prev => (prev + (prev ? ' ' : '') + latestInterimRef.current).trim());
+        }
+        latestInterimRef.current = '';
+      };
+
       recognitionRef.current = recognition;
     }
 
@@ -70,6 +111,9 @@ export default function Interview() {
       unsubscribeMessages();
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
+      }
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
       }
     };
   }, [id]);
@@ -84,10 +128,10 @@ export default function Interview() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     // Text to Speech for the latest AI message
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.role === 'ai' && isTTSActive) {
+    if (lastMessage?.role === 'ai' && isTTSActive && !isProcessing) {
       speak(lastMessage.text);
     }
-  }, [messages, isTTSActive]);
+  }, [messages, isTTSActive, isProcessing]);
 
   const startFirstQuestion = async (intRef: any, currentInterview: MockInterview) => {
     setIsProcessing(true);
@@ -124,12 +168,27 @@ export default function Interview() {
     window.speechSynthesis.speak(utterance);
   };
 
+  const currentDisplayedText = isRecording && interimText 
+    ? (inputText + (inputText ? ' ' : '') + interimText) 
+    : inputText;
+
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputText.trim() || isProcessing) return;
+    const messageText = currentDisplayedText.trim();
+    if (!messageText || isProcessing) return;
 
-    const messageText = inputText.trim();
+    if (isRecording) {
+      recognitionRef.current?.stop();
+    }
+    
+    // Stop any ongoing speech immediately
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
     setInputText('');
+    setInterimText('');
+    latestInterimRef.current = '';
     setIsProcessing(true);
 
     // Save user message
@@ -172,8 +231,15 @@ export default function Interview() {
     if (isRecording) {
       recognitionRef.current?.stop();
     } else {
-      recognitionRef.current?.start();
-      setIsRecording(true);
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      try {
+        recognitionRef.current?.start();
+        setIsRecording(true);
+      } catch (e) {
+        console.warn("Could not start speech recognition:", e);
+      }
     }
   };
 
@@ -383,12 +449,21 @@ export default function Interview() {
           {/* Header Navigation */}
           <header className="p-4 lg:p-6 border-b border-white/5 bg-white/[0.01] flex items-center justify-between shrink-0">
             <div className="flex items-center gap-4 min-w-0">
-              <div className="w-10 h-10 rounded-2xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center shrink-0">
-                <Code className="w-5 h-5 text-teal-400" />
+              <div className={cn(
+                "w-10 h-10 rounded-2xl border flex items-center justify-center shrink-0 transition-colors duration-500",
+                isRecording ? "bg-red-500/10 border-red-500/20" : "bg-teal-500/10 border-teal-500/20"
+              )}>
+                {isRecording ? <Mic className="w-5 h-5 text-red-400 animate-pulse" /> : <Code className="w-5 h-5 text-teal-400" />}
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-black text-teal-400 uppercase tracking-widest animate-pulse shrink-0">Recording...</span>
+                  {isProcessing ? (
+                    <span className="text-[10px] font-black text-teal-400 uppercase tracking-widest animate-pulse shrink-0">Processing...</span>
+                  ) : isRecording ? (
+                    <span className="text-[10px] font-black text-red-400 uppercase tracking-widest animate-pulse shrink-0">Listening...</span>
+                  ) : (
+                    <span className="text-[10px] font-black text-teal-400 uppercase tracking-widest shrink-0">Ready</span>
+                  )}
                   <div className="h-0.5 flex-1 bg-white/5 rounded-full min-w-[20px] hidden sm:block" />
                 </div>
                 <h2 className="text-sm lg:text-base font-black text-white uppercase tracking-widest truncate">
@@ -474,11 +549,14 @@ export default function Interview() {
                 className={cn(
                   "w-14 h-14 lg:w-16 lg:h-16 rounded-2xl flex items-center justify-center transition-all duration-500 shadow-2xl shrink-0 group relative overflow-hidden",
                   isRecording 
-                    ? "bg-red-500 border-red-400 text-white animate-pulse" 
-                    : "bg-teal-600 border-teal-500 text-white hover:bg-white hover:text-black"
+                    ? "bg-red-500 border-red-400 text-white" 
+                    : "bg-teal-600 border-teal-500 text-white hover:bg-teal-500"
                 )}
               >
                 <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                {isRecording && (
+                   <span className="absolute inset-0 rounded-2xl animate-ping opacity-20 bg-white"></span>
+                )}
                 {isRecording ? <MicOff className="w-6 h-6 lg:w-7 lg:h-7 relative z-10" /> : <Mic className="w-6 h-6 lg:w-7 lg:h-7 relative z-10" />}
               </button>
             </div>
@@ -486,14 +564,21 @@ export default function Interview() {
             <form onSubmit={handleSend} className="flex-1 w-full relative group">
               <input
                 type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
+                value={currentDisplayedText}
+                onChange={(e) => {
+                  setInputText(e.target.value);
+                  setInterimText('');
+                  latestInterimRef.current = '';
+                  if (isRecording) {
+                    recognitionRef.current?.stop();
+                  }
+                }}
                 placeholder="Type your strategic response..."
                 className="w-full bg-white/[0.03] border border-white/10 rounded-2xl lg:rounded-3xl px-8 py-4 lg:py-5 text-sm font-medium focus:outline-none focus:border-teal-500/50 focus:bg-white/[0.08] transition-all text-white placeholder:text-slate-700 placeholder:uppercase placeholder:text-[10px] placeholder:tracking-widest pr-12 lg:pr-24"
               />
               <button
                 type="submit"
-                disabled={!inputText.trim() || isProcessing}
+                disabled={!currentDisplayedText.trim() || isProcessing}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-3 lg:p-4 bg-white text-black rounded-xl lg:rounded-2xl hover:bg-teal-400 hover:text-white transition-all active:scale-95 disabled:opacity-0 shadow-xl"
               >
                 <Send className="w-4 h-4 lg:w-5 lg:h-5" />
