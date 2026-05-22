@@ -27,6 +27,12 @@ export default function Interview() {
   const [showMobileSidebar, setShowMobileSidebar] = useState<'info' | 'analytics' | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const latestInterimRef = useRef('');
+  const baseTextRef = useRef('');
+  const inputTextRef = useRef(inputText);
+
+  useEffect(() => {
+    inputTextRef.current = inputText;
+  }, [inputText]);
 
   // Speech Recognition
   const recognitionRef = useRef<any>(null);
@@ -63,12 +69,15 @@ export default function Interview() {
       recognition.onstart = () => {
         setIsRecording(true);
         latestInterimRef.current = '';
+        // Note: baseTextRef is set in toggleRecording safely before start.
       };
 
       recognition.onresult = (event: any) => {
         let finalTrans = '';
         let interimTrans = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
+        
+        // Always rebuild the complete transcript from the current session
+        for (let i = 0; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTrans += event.results[i][0].transcript;
           } else {
@@ -76,9 +85,9 @@ export default function Interview() {
           }
         }
         
-        if (finalTrans) {
-          setInputText(prev => (prev + (prev ? ' ' : '') + finalTrans).trim());
-        }
+        // Assemble the text anchored against the pre-session base text
+        const newText = (baseTextRef.current + (baseTextRef.current && finalTrans ? ' ' : '') + finalTrans).trim();
+        setInputText(newText);
         setInterimText(interimTrans);
         latestInterimRef.current = interimTrans;
       };
@@ -98,7 +107,13 @@ export default function Interview() {
         setIsRecording(false);
         setInterimText('');
         if (latestInterimRef.current) {
-          setInputText(prev => (prev + (prev ? ' ' : '') + latestInterimRef.current).trim());
+          setInputText(prev => {
+            const flushText = (prev + (prev ? ' ' : '') + latestInterimRef.current).trim();
+            baseTextRef.current = flushText; // Keep base anchored
+            return flushText;
+          });
+        } else {
+           baseTextRef.current = inputTextRef.current; // Sync base reference
         }
         latestInterimRef.current = '';
       };
@@ -187,6 +202,7 @@ export default function Interview() {
     }
 
     setInputText('');
+    baseTextRef.current = '';
     setInterimText('');
     latestInterimRef.current = '';
     setIsProcessing(true);
@@ -234,9 +250,9 @@ export default function Interview() {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
+      baseTextRef.current = inputTextRef.current; // Anchor transcript to current text
       try {
         recognitionRef.current?.start();
-        setIsRecording(true);
       } catch (e) {
         console.warn("Could not start speech recognition:", e);
       }
@@ -567,6 +583,7 @@ export default function Interview() {
                 value={currentDisplayedText}
                 onChange={(e) => {
                   setInputText(e.target.value);
+                  baseTextRef.current = e.target.value;
                   setInterimText('');
                   latestInterimRef.current = '';
                   if (isRecording) {
@@ -588,7 +605,7 @@ export default function Interview() {
             <button
               onClick={finishInterview}
               disabled={isFinishing}
-              className="hidden sm:block px-8 py-5 bg-red-500/10 border border-red-500/20 text-red-500 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 shrink-0 shadow-lg text-safe"
+              className="w-full sm:w-auto px-8 py-4 sm:py-5 bg-red-500/10 border border-red-500/20 text-red-500 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 shrink-0 shadow-lg text-safe"
             >
               Finish Session
             </button>
