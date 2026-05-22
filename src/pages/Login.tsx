@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Lock, Eye, EyeOff, BrainCircuit, ArrowRight, Github } from 'lucide-react';
 
 export default function Login() {
-  const { signInWithEmail, signInWithGoogle, user } = useAuth();
+  const { signInWithEmail, signUpWithEmail, signInWithGoogle, user } = useAuth();
   const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -27,11 +28,7 @@ export default function Login() {
       if (isLogin) {
         await signInWithEmail(email, password);
       } else {
-        // Implement signup here if necessary, or change logic to just login 
-        // We added signUpWithEmail to context, just import it from useAuth
-        // Assuming we just want login for now based on 'user log in page'
-        // Let's import signUp if we need it, but let's stick to login / signup basic.
-        setError('Sign up with email is disabled in this UI. Use Google or log in if you have an account.');
+        await signUpWithEmail(email, password, name || email.split('@')[0]);
       }
     } catch (err: any) {
       console.error(err);
@@ -89,10 +86,10 @@ export default function Login() {
 
           <div className="text-center mb-8">
             <h1 className="text-2xl font-black text-white tracking-widest uppercase mb-2">
-              Welcome Back
+              {isLogin ? 'Welcome Back' : 'Create Account'}
             </h1>
             <p className="text-sm text-slate-400 font-medium">
-              Sign in to continue your interview prep
+              {isLogin ? 'Sign in to continue your interview prep' : 'Get started with your interview journey'}
             </p>
           </div>
 
@@ -110,6 +107,31 @@ export default function Login() {
           </AnimatePresence>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {!isLogin && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">
+                  Full Name
+                </label>
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <BrainCircuit className="h-5 w-5 text-slate-500 group-focus-within:text-teal-400 transition-colors" />
+                  </div>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="block w-full pl-11 pr-4 py-3 bg-[#0A0B10]/50 border border-white/10 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-teal-500/50 focus:border-teal-500/50 transition-all"
+                    placeholder="Your Name"
+                    required={!isLogin}
+                  />
+                </div>
+              </motion.div>
+            )}
+
             <div>
               <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2 ml-1">
                 Email Address
@@ -164,12 +186,24 @@ export default function Login() {
                 <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
               ) : (
                 <>
-                  Sign In
+                  {isLogin ? 'Sign In' : 'Sign Up'}
                   <ArrowRight className="ml-2 w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </>
               )}
             </button>
           </form>
+
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => {
+                setIsLogin(!isLogin);
+                setError('');
+              }}
+              className="text-slate-400 hover:text-white transition-colors text-sm font-medium"
+            >
+              {isLogin ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
+            </button>
+          </div>
 
           <div className="mt-8 flex items-center">
             <div className="flex-1 border-t border-white/10"></div>
