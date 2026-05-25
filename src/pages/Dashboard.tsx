@@ -111,7 +111,7 @@ export default function Dashboard() {
   if (loading) return <div className="max-w-7xl mx-auto px-4 py-8">Loading...</div>;
 
   const totalInterviews = interviews.length;
-  const completedInterviews = interviews.filter(i => i.status === 'completed' && i.feedback);
+  const completedInterviews = interviews.filter(i => i.status === 'completed' && i.feedback && typeof i.feedback.overallScore === 'number');
   const avgScore = completedInterviews.length > 0
     ? Math.round(completedInterviews.reduce((acc, curr) => acc + (curr.feedback?.overallScore || 0), 0) / completedInterviews.length)
     : 0;
@@ -186,7 +186,9 @@ export default function Dashboard() {
                 <div className="flex items-center">
                   {interview.status === 'completed' ? (
                     <div className="text-right">
-                      <span className="text-emerald-400 font-display font-black text-2xl">{interview.feedback?.overallScore}%</span>
+                      <span className="text-emerald-400 font-display font-black text-2xl">
+                        {typeof interview.feedback?.overallScore === 'number' ? `${interview.feedback.overallScore}%` : 'N/A'}
+                      </span>
                       <p className="text-[9px] text-slate-600 uppercase font-black tracking-widest">Alpha</p>
                     </div>
                   ) : (
@@ -222,11 +224,13 @@ export default function Dashboard() {
                 </div>
                 <div className="flex items-center">
                   <div className="text-right">
-                    <span className="text-white font-display font-black text-2xl">{quiz.score}/{quiz.total}</span>
+                    <span className="text-white font-display font-black text-2xl">
+                      {typeof quiz.score === 'number' && typeof quiz.total === 'number' ? `${quiz.score}/${quiz.total}` : 'N/A'}
+                    </span>
                     <div className="w-20 h-1 bg-white/5 rounded-full mt-2 overflow-hidden">
                       <motion.div 
                         initial={{ width: 0 }}
-                        animate={{ width: `${(quiz.score / quiz.total) * 100}%` }}
+                        animate={{ width: typeof quiz.score === 'number' && typeof quiz.total === 'number' && quiz.total > 0 ? `${(quiz.score / quiz.total) * 100}%` : '0%' }}
                         className="bg-purple-500 h-full rounded-full shadow-[0_0_12px_rgba(168,85,247,0.6)]" 
                       />
                     </div>

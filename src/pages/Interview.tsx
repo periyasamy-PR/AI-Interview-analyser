@@ -11,6 +11,35 @@ import { Mic, MicOff, Send, PhoneOff, CheckCircle2, User, Bot, Loader2, Volume2,
 import ReactMarkdown from 'react-markdown';
 import { cn } from '../lib/utils';
 
+// Helper function to dynamically merge browser speech transcripts with input buffer to prevent word duplication
+function mergeSpeechTranscripts(base: string, sessionFinal: string): string {
+  base = base.trim();
+  sessionFinal = sessionFinal.trim();
+  if (!base) return sessionFinal;
+  if (!sessionFinal) return base;
+
+  const baseWords = base.split(/\s+/);
+  const finalWords = sessionFinal.split(/\s+/);
+
+  let overlapLength = 0;
+  const maxCheck = Math.min(baseWords.length, finalWords.length);
+
+  for (let len = 1; len <= maxCheck; len++) {
+    const baseSlice = baseWords.slice(baseWords.length - len).join(" ").toLowerCase();
+    const finalSlice = finalWords.slice(0, len).join(" ").toLowerCase();
+    if (baseSlice === finalSlice) {
+      overlapLength = len;
+    }
+  }
+
+  if (overlapLength > 0) {
+    const nonOverlappingFinal = finalWords.slice(overlapLength).join(" ");
+    return (base + (nonOverlappingFinal ? " " + nonOverlappingFinal : "")).trim();
+  }
+
+  return (base + " " + sessionFinal).trim();
+}
+
 export default function Interview() {
   const { user: authUser, profile } = useAuth();
   const { id } = useParams();
@@ -26,8 +55,9 @@ export default function Interview() {
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [showMobileSidebar, setShowMobileSidebar] = useState<'info' | 'analytics' | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const latestInterimRef = useRef('');
   const baseTextRef = useRef('');
+  const currentFinalTextRef = useRef('');
+  const shouldBeRecordingRef = useRef(false);
   const inputTextRef = useRef(inputText);
 
   useEffect(() => {
@@ -64,58 +94,76 @@ export default function Interview() {
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = 'en-US';
+      recognition.lang = navigator.language || 'en-US';
       
       recognition.onstart = () => {
         setIsRecording(true);
-        latestInterimRef.current = '';
-        // Note: baseTextRef is set in toggleRecording safely before start.
+        setInterimText('');
+        // Sync base reference directly from the synchronous ref to prevent React state update races
+        baseTextRef.current = currentFinalTextRef.current;
       };
 
       recognition.onresult = (event: any) => {
         let finalTrans = '';
         let interimTrans = '';
         
-        // Always rebuild the complete transcript from the current session
         for (let i = 0; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTrans += event.results[i][0].transcript;
+            const trimmed = transcript.trim();
+            if (trimmed) {
+              finalTrans += (finalTrans ? ' ' : '') + trimmed;
+            }
           } else {
-            interimTrans += event.results[i][0].transcript;
+            const trimmed = transcript.trim();
+            if (trimmed) {
+              interimTrans += (interimTrans ? ' ' : '') + trimmed;
+            }
           }
         }
         
-        // Assemble the text anchored against the pre-session base text
-        const newText = (baseTextRef.current + (baseTextRef.current && finalTrans ? ' ' : '') + finalTrans).trim();
-        setInputText(newText);
+        // Merge base state with new final session transcript to guarantee zero duplicate words/repeats
+        const combined = mergeSpeechTranscripts(baseTextRef.current, finalTrans);
+        currentFinalTextRef.current = combined;
+        setInputText(combined);
         setInterimText(interimTrans);
-        latestInterimRef.current = interimTrans;
       };
 
       recognition.onerror = (event: any) => {
         console.error("Speech recognition error:", event.error);
         if (event.error === 'not-allowed') {
           alert('Microphone access denied. Please allow microphone permissions in your browser. (Also check your system/OS settings).');
-        } else if (event.error !== 'no-speech') {
-          // If it's a network, audio-capture, or unrecognized error, alert the user so they know it's a browser/OS issue.
-          alert(`Speech recognition failed: ${event.error}. Please ensure you are using Google Chrome, check your microphone settings, and ensure your internet connection doesn't block Google's speech services.`);
+          shouldBeRecordingRef.current = false;
+          setIsRecording(false);
+        } else if (event.error === 'aborted') {
+          console.log("Speech recognition aborted.");
+        } else if (event.error === 'no-speech') {
+          console.log("No speech detected.");
+        } else {
+          console.warn(`Speech recognition failed: ${event.error}.`);
         }
-        setIsRecording(false);
       };
 
       recognition.onend = () => {
         setIsRecording(false);
         setInterimText('');
-        if (latestInterimRef.current) {
-          setInputText(prev => {
-            const flushText = (prev + (prev ? ' ' : '') + latestInterimRef.current).trim();
-            baseTextRef.current = flushText; // Keep base anchored
-            return flushText;
-          });
-        } else {
-           baseTextRef.current = inputTextRef.current; // Sync base reference
+        
+        // Sync base text reference to the synchronous final text from this session
+        baseTextRef.current = currentFinalTextRef.current;
+        setInputText(currentFinalTextRef.current);
+
+        // Auto-restart with a 400ms delay to give browser media elements time to cleanly release/reacquire to avoid lockups
+        if (shouldBeRecordingRef.current) {
+          setTimeout(() => {
+            if (shouldBeRecordingRef.current) {
+              try {
+                recognition.start();
+              } catch (e) {
+                console.warn("Speech recognition auto-restart failed:", e);
+              }
+            }
+          }, 400);
         }
-        latestInterimRef.current = '';
       };
 
       recognitionRef.current = recognition;
@@ -128,7 +176,12 @@ export default function Interview() {
         window.speechSynthesis.cancel();
       }
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onresult = null;
+        try {
+          recognitionRef.current.stop();
+        } catch(e) {}
       }
     };
   }, [id]);
@@ -193,6 +246,7 @@ export default function Interview() {
     if (!messageText || isProcessing) return;
 
     if (isRecording) {
+      shouldBeRecordingRef.current = false;
       recognitionRef.current?.stop();
     }
     
@@ -203,8 +257,8 @@ export default function Interview() {
 
     setInputText('');
     baseTextRef.current = '';
+    currentFinalTextRef.current = '';
     setInterimText('');
-    latestInterimRef.current = '';
     setIsProcessing(true);
 
     // Save user message
@@ -245,12 +299,16 @@ export default function Interview() {
 
   const toggleRecording = () => {
     if (isRecording) {
+      shouldBeRecordingRef.current = false;
       recognitionRef.current?.stop();
     } else {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
       }
+      shouldBeRecordingRef.current = true;
       baseTextRef.current = inputTextRef.current; // Anchor transcript to current text
+      currentFinalTextRef.current = inputTextRef.current;
+      setInterimText('');
       try {
         recognitionRef.current?.start();
       } catch (e) {
@@ -343,7 +401,7 @@ export default function Interview() {
   if (!interview) return null;
 
   return (
-    <div className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 lg:py-6 flex flex-col gap-4 lg:gap-5 animate-in fade-in zoom-in-95 duration-500 relative overflow-hidden min-h-0">
+    <div className="flex-1 h-[calc(100dvh-5rem)] max-h-[calc(100dvh-5rem)] w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 lg:py-4 flex flex-col gap-3 lg:gap-4 animate-in fade-in zoom-in-95 duration-500 relative overflow-hidden min-h-0">
       {isFinishing && (
         <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#0A0B10]/95 backdrop-blur-md">
           <div className="w-16 h-16 border-4 border-teal-500/20 border-t-teal-500 rounded-full animate-spin mb-6" />
@@ -375,15 +433,15 @@ export default function Interview() {
         ))}
       </div>
 
-      <div className="flex-1 flex flex-col lg:flex-row gap-4 lg:gap-6 min-h-0">
+      <div className="flex-1 flex flex-col lg:flex-row gap-3 lg:gap-4 min-h-0 overflow-hidden">
         {/* Left Sidebar: The AI Persona */}
         <aside className={cn(
-          "lg:w-64 flex-col gap-4 lg:gap-6 transition-all duration-500 shrink-0 flex-1 lg:flex-none",
+          "lg:w-64 flex-col gap-3 lg:gap-4 transition-all duration-500 shrink-0 flex-1 lg:flex-none min-h-0",
           showMobileSidebar === 'info' ? "flex animate-in fade-in slide-in-from-left-4" : "hidden lg:flex"
         )}>
           {/* AI Avatar Card */}
-          <div className="glass-card p-6 lg:p-8 flex flex-col items-center justify-center relative overflow-hidden border-white/10 ring-1 ring-teal-500/10 shrink-0">
-            <div className="relative w-24 h-24 lg:w-32 lg:h-32 flex items-center justify-center mb-6">
+          <div className="glass-card p-4 lg:p-5 flex flex-col items-center justify-center relative overflow-hidden border-white/10 ring-1 ring-teal-500/10 shrink-0">
+            <div className="relative w-16 h-16 lg:w-20 lg:h-20 flex items-center justify-center mb-4">
               <AnimatePresence>
                 {isAISpeaking && (
                   <motion.div
@@ -396,19 +454,19 @@ export default function Interview() {
               </AnimatePresence>
 
               <div className={cn(
-                "relative w-24 h-24 rounded-full bg-slate-900/80 border border-white/10 flex items-center justify-center transition-all duration-700 z-10",
-                isAISpeaking ? "scale-110 border-teal-500/50 shadow-[0_0_40px_rgba(45,212,191,0.3)]" : "scale-100 shadow-xl"
+                "relative w-16 h-16 rounded-full bg-slate-900/80 border border-white/10 flex items-center justify-center transition-all duration-700 z-10",
+                isAISpeaking ? "scale-105 border-teal-500/50 shadow-[0_0_30px_rgba(45,212,191,0.3)]" : "scale-100 shadow-xl"
               )}>
-                <Bot className={cn("w-10 h-10 text-white transition-all duration-500", isAISpeaking ? "text-teal-400 drop-shadow-[0_0_10px_rgba(45,212,191,0.8)]" : "opacity-40")} />
+                <Bot className={cn("w-7 h-7 text-white transition-all duration-500", isAISpeaking ? "text-teal-400 drop-shadow-[0_0_10px_rgba(45,212,191,0.8)]" : "opacity-40")} />
               </div>
             </div>
             
-            <div className="text-center space-y-1">
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Digital Assistant</span>
-              <h3 className="text-lg font-black text-white uppercase tracking-wider text-safe">Leo</h3>
-              <div className="flex items-center justify-center gap-2 pt-2">
+            <div className="text-center space-y-0.5">
+              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Digital Assistant</span>
+              <h3 className="text-base font-black text-white uppercase tracking-wider text-safe">Leo</h3>
+              <div className="flex items-center justify-center gap-1.5 pt-1">
                 <div className={cn("w-1.5 h-1.5 rounded-full", isAISpeaking ? "bg-teal-500 animate-pulse" : "bg-slate-700")} />
-                <p className={cn("text-[9px] font-black uppercase tracking-[0.2em]", isAISpeaking ? "text-teal-400" : "text-slate-600")}>
+                <p className={cn("text-[8px] font-black uppercase tracking-[0.2em]", isAISpeaking ? "text-teal-400" : "text-slate-600")}>
                   {isAISpeaking ? 'Speaking...' : 'Listening'}
                 </p>
               </div>
@@ -459,7 +517,7 @@ export default function Interview() {
 
         {/* Main Central Chat */}
         <main className={cn(
-          "flex-1 flex-col min-w-0 transition-all duration-500 bg-[#0A0B10]/20 rounded-3xl border border-white/10 overflow-hidden relative shadow-2xl",
+          "flex-1 flex-col min-w-0 min-h-0 transition-all duration-500 bg-[#0A0B10]/20 rounded-3xl border border-white/10 overflow-hidden relative shadow-2xl",
           showMobileSidebar ? "hidden lg:flex" : "flex"
         )}>
           {/* Header Navigation */}
@@ -557,41 +615,75 @@ export default function Interview() {
           </div>
 
           {/* Controls Footer */}
-          <footer className="p-4 lg:p-8 border-t border-white/5 bg-white/[0.02] flex flex-col sm:flex-row items-center gap-4 shrink-0">
-            <div className="flex w-full sm:w-auto gap-3">
+          <footer className="p-3 lg:p-8 border-t border-white/5 bg-white/[0.02] flex flex-col sm:flex-row items-center gap-3 lg:gap-4 shrink-0">
+            <div className="flex w-full sm:w-auto items-center justify-between sm:justify-start gap-3 order-2 sm:order-1">
               <button
                 type="button"
                 onClick={toggleRecording}
                 className={cn(
-                  "w-14 h-14 lg:w-16 lg:h-16 rounded-2xl flex items-center justify-center transition-all duration-500 shadow-2xl shrink-0 group relative overflow-hidden",
+                  "w-14 h-14 lg:w-16 lg:h-16 rounded-2xl flex items-center justify-center transition-all duration-500 shrink-0 group relative overflow-hidden",
                   isRecording 
-                    ? "bg-red-500 border-red-400 text-white" 
-                    : "bg-teal-600 border-teal-500 text-white hover:bg-teal-500"
+                    ? "bg-red-500 border-red-400 text-white shadow-[0_0_20px_rgba(239,68,68,0.4)] animate-pulse" 
+                    : "bg-teal-600 border-teal-500 text-white hover:bg-teal-500 hover:shadow-[0_0_15px_rgba(13,148,136,0.3)] shadow-2xl"
                 )}
               >
                 <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
                 {isRecording && (
-                   <span className="absolute inset-0 rounded-2xl animate-ping opacity-20 bg-white"></span>
+                   <span className="absolute inset-0 rounded-2xl animate-ping opacity-25 bg-red-400"></span>
                 )}
                 {isRecording ? <MicOff className="w-6 h-6 lg:w-7 lg:h-7 relative z-10" /> : <Mic className="w-6 h-6 lg:w-7 lg:h-7 relative z-10" />}
               </button>
+
+              {/* Mobile-only Finish Button */}
+              <button
+                onClick={finishInterview}
+                disabled={isFinishing}
+                className="flex-1 sm:hidden h-14 bg-red-500/10 border border-red-500/20 text-red-500 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 shadow-lg text-safe flex items-center justify-center"
+              >
+                Finish Session
+              </button>
             </div>
 
-            <form onSubmit={handleSend} className="flex-1 w-full relative group">
+            <form onSubmit={handleSend} className="w-full sm:flex-1 relative group order-1 sm:order-2">
+              {isRecording && (
+                <div id="recording-live-indicator" className="absolute -top-7 left-4 flex items-center gap-2 text-[10px] font-black text-teal-400 uppercase tracking-widest z-10 select-none">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-ping"></span>
+                  <span>Listening</span>
+                  
+                  {/* Liquid Real-Time Audio Waves Visualizer */}
+                  <div className="flex items-end gap-0.5 h-3 ml-1 mr-2 opacity-80 shrink-0">
+                    <motion.div animate={{ height: [4, 12, 4] }} transition={{ duration: 0.6, repeat: Infinity, ease: "easeInOut" }} className="w-0.5 bg-teal-400 rounded-full" />
+                    <motion.div animate={{ height: [8, 4, 8] }} transition={{ duration: 0.5, repeat: Infinity, ease: "easeInOut", delay: 0.1 }} className="w-0.5 bg-teal-400 rounded-full" />
+                    <motion.div animate={{ height: [4, 10, 4] }} transition={{ duration: 0.7, repeat: Infinity, ease: "easeInOut", delay: 0.25 }} className="w-0.5 bg-teal-400 rounded-full" />
+                    <motion.div animate={{ height: [6, 12, 6] }} transition={{ duration: 0.55, repeat: Infinity, ease: "easeInOut", delay: 0.15 }} className="w-0.5 bg-teal-400 rounded-full" />
+                    <motion.div animate={{ height: [3, 8, 3] }} transition={{ duration: 0.65, repeat: Infinity, ease: "easeInOut", delay: 0.3 }} className="w-0.5 bg-teal-400 rounded-full" />
+                  </div>
+                  {interimText && (
+                    <span className="text-slate-500 normal-case font-normal font-sans text-[9px] truncate max-w-[150px] lg:max-w-[280px]">
+                      &ldquo;{interimText}&rdquo;
+                    </span>
+                  )}
+                </div>
+              )}
               <input
+                id="interview-input-field"
                 type="text"
                 value={currentDisplayedText}
                 onChange={(e) => {
                   setInputText(e.target.value);
                   baseTextRef.current = e.target.value;
+                  currentFinalTextRef.current = e.target.value;
                   setInterimText('');
-                  latestInterimRef.current = '';
                   if (isRecording) {
+                    shouldBeRecordingRef.current = false;
                     recognitionRef.current?.stop();
                   }
                 }}
-                placeholder="Type your strategic response..."
-                className="w-full bg-white/[0.03] border border-white/10 rounded-2xl lg:rounded-3xl px-8 py-4 lg:py-5 text-sm font-medium focus:outline-none focus:border-teal-500/50 focus:bg-white/[0.08] transition-all text-white placeholder:text-slate-700 placeholder:uppercase placeholder:text-[10px] placeholder:tracking-widest pr-12 lg:pr-24"
+                placeholder={isRecording ? "Listening to your response..." : "Type your strategic response..."}
+                className={cn(
+                  "w-full bg-white/[0.03] border border-white/10 rounded-2xl lg:rounded-3xl px-6 py-4 lg:px-8 lg:py-5 text-sm font-medium focus:outline-none focus:border-teal-500/50 focus:bg-white/[0.08] transition-all text-white placeholder:text-slate-700 placeholder:uppercase placeholder:text-[10px] placeholder:tracking-widest pr-12 lg:pr-24",
+                  isRecording && "border-teal-500/30 bg-teal-500/[0.01]"
+                )}
               />
               <button
                 type="submit"
@@ -602,10 +694,11 @@ export default function Interview() {
               </button>
             </form>
 
+            {/* Desktop-only Finish Button */}
             <button
               onClick={finishInterview}
               disabled={isFinishing}
-              className="w-full sm:w-auto px-8 py-4 sm:py-5 bg-red-500/10 border border-red-500/20 text-red-500 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 shrink-0 shadow-lg text-safe"
+              className="hidden sm:block px-8 py-5 bg-red-500/10 border border-red-500/20 text-red-500 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 shrink-0 shadow-lg text-safe order-3"
             >
               Finish Session
             </button>
@@ -614,19 +707,19 @@ export default function Interview() {
 
         {/* Right Sidebar: Real-time Analysis */}
         <aside className={cn(
-          "lg:w-72 flex-col gap-4 lg:gap-6 transition-all duration-500 shrink-0 flex-1 lg:flex-none",
+          "lg:w-72 flex-col gap-3 lg:gap-4 transition-all duration-500 shrink-0 flex-1 lg:flex-none min-h-0",
           showMobileSidebar === 'analytics' ? "flex animate-in fade-in slide-in-from-right-4" : "hidden lg:flex"
         )}>
           {/* Signal Cards */}
-          <div className="glass-card p-6 lg:p-8 border-white/10 relative overflow-hidden ring-1 ring-white/5 flex flex-col gap-8 shrink-0">
+          <div className="glass-card p-4 lg:p-5 border-white/10 relative overflow-hidden ring-1 ring-white/5 flex flex-col gap-4 shrink-0">
             <h4 className="text-[10px] font-black text-slate-600 uppercase tracking-widest text-safe">Performance Signals</h4>
-            <div className="space-y-8">
+            <div className="space-y-4">
               {[
                 { label: 'Signal Coherence', value: 'High', color: 'teal', width: '92%' },
                 { label: 'Voice Confidence', value: 'Optimal', color: 'emerald', width: '85%' },
                 { label: 'Technical Depth', value: 'Elevated', color: 'purple', width: '78%' }
               ].map((signal, i) => (
-                <div key={`signal-${i}`} className="space-y-3">
+                <div key={`signal-${i}`} className="space-y-2">
                   <div className="flex justify-between items-end">
                     <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{signal.label}</span>
                     <span className={cn("text-[10px] font-black uppercase tracking-widest", `text-${signal.color}-400`)}>{signal.value}</span>
