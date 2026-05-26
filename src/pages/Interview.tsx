@@ -11,34 +11,36 @@ import { Mic, MicOff, Send, PhoneOff, CheckCircle2, User, Bot, Loader2, Volume2,
 import ReactMarkdown from 'react-markdown';
 import { cn } from '../lib/utils';
 
-// Helper function to dynamically merge browser speech transcripts with input buffer to prevent word duplication
-function mergeSpeechTranscripts(base: string, sessionFinal: string): string {
-  base = base.trim();
-  sessionFinal = sessionFinal.trim();
-  if (!base) return sessionFinal;
-  if (!sessionFinal) return base;
+// Helper function to append and merge speech transcripts seamlessly, avoiding duplicates / overlays
+function appendDeduplicated(baseText: string, newText: string): string {
+  const base = baseText.trim();
+  const news = newText.trim();
+  if (!base) return news;
+  if (!news) return base;
 
   const baseWords = base.split(/\s+/);
-  const finalWords = sessionFinal.split(/\s+/);
+  const newsWords = news.split(/\s+/);
 
   let overlapLength = 0;
-  const maxCheck = Math.min(baseWords.length, finalWords.length);
+  const maxCheck = Math.min(baseWords.length, newsWords.length);
 
   for (let len = 1; len <= maxCheck; len++) {
+    // Check if the end of base matches the beginning of news
     const baseSlice = baseWords.slice(baseWords.length - len).join(" ").toLowerCase();
-    const finalSlice = finalWords.slice(0, len).join(" ").toLowerCase();
-    if (baseSlice === finalSlice) {
+    const newsSlice = newsWords.slice(0, len).join(" ").toLowerCase();
+    if (baseSlice === newsSlice) {
       overlapLength = len;
     }
   }
 
   if (overlapLength > 0) {
-    const nonOverlappingFinal = finalWords.slice(overlapLength).join(" ");
-    return (base + (nonOverlappingFinal ? " " + nonOverlappingFinal : "")).trim();
+    const nonOverlappingNews = newsWords.slice(overlapLength).join(" ");
+    return (base + (nonOverlappingNews ? " " + nonOverlappingNews : "")).trim();
   }
 
-  return (base + " " + sessionFinal).trim();
+  return (base + " " + news).trim();
 }
+
 
 export default function Interview() {
   const { user: authUser, profile } = useAuth();
@@ -59,6 +61,7 @@ export default function Interview() {
   const currentFinalTextRef = useRef('');
   const shouldBeRecordingRef = useRef(false);
   const inputTextRef = useRef(inputText);
+  const lastProcessedIndexRef = useRef(-1);
 
   useEffect(() => {
     inputTextRef.current = inputText;
@@ -100,19 +103,26 @@ export default function Interview() {
         setIsRecording(true);
         setInterimText('');
         // Sync base reference directly from the synchronous ref to prevent React state update races
-        baseTextRef.current = currentFinalTextRef.current;
+        baseTextRef.current = inputTextRef.current;
+        currentFinalTextRef.current = '';
+        lastProcessedIndexRef.current = -1;
       };
 
       recognition.onresult = (event: any) => {
-        let finalTrans = '';
         let interimTrans = '';
+        let newFinals = '';
         
-        for (let i = 0; i < event.results.length; ++i) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            const trimmed = transcript.trim();
-            if (trimmed) {
-              finalTrans += (finalTrans ? ' ' : '') + trimmed;
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const result = event.results[i];
+          const transcript = result[0].transcript;
+          
+          if (result.isFinal) {
+            if (i > lastProcessedIndexRef.current) {
+              const trimmed = transcript.trim();
+              if (trimmed) {
+                newFinals += (newFinals ? ' ' : '') + trimmed;
+              }
+              lastProcessedIndexRef.current = i;
             }
           } else {
             const trimmed = transcript.trim();
@@ -122,11 +132,10 @@ export default function Interview() {
           }
         }
         
-        // Merge base state with new final session transcript to guarantee zero duplicate words/repeats
-        const combined = mergeSpeechTranscripts(baseTextRef.current, finalTrans);
-        currentFinalTextRef.current = combined;
-        setInputText(combined);
-        setInterimText(interimTrans);
+        if (newFinals) {
+          setInputText((prev) => appendDeduplicated(prev, newFinals));
+        }
+        setInterimText(interimTrans.trim());
       };
 
       recognition.onerror = (event: any) => {
@@ -148,9 +157,7 @@ export default function Interview() {
         setIsRecording(false);
         setInterimText('');
         
-        // Sync base text reference to the synchronous final text from this session
-        baseTextRef.current = currentFinalTextRef.current;
-        setInputText(currentFinalTextRef.current);
+        lastProcessedIndexRef.current = -1;
 
         // Auto-restart with a 400ms delay to give browser media elements time to cleanly release/reacquire to avoid lockups
         if (shouldBeRecordingRef.current) {
@@ -259,6 +266,7 @@ export default function Interview() {
     baseTextRef.current = '';
     currentFinalTextRef.current = '';
     setInterimText('');
+    lastProcessedIndexRef.current = -1;
     setIsProcessing(true);
 
     // Save user message
@@ -306,9 +314,8 @@ export default function Interview() {
         window.speechSynthesis.cancel();
       }
       shouldBeRecordingRef.current = true;
-      baseTextRef.current = inputTextRef.current; // Anchor transcript to current text
-      currentFinalTextRef.current = inputTextRef.current;
       setInterimText('');
+      lastProcessedIndexRef.current = -1;
       try {
         recognitionRef.current?.start();
       } catch (e) {
@@ -672,7 +679,7 @@ export default function Interview() {
                 onChange={(e) => {
                   setInputText(e.target.value);
                   baseTextRef.current = e.target.value;
-                  currentFinalTextRef.current = e.target.value;
+                  currentFinalTextRef.current = '';
                   setInterimText('');
                   if (isRecording) {
                     shouldBeRecordingRef.current = false;
