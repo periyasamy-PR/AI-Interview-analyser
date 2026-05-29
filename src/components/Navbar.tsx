@@ -68,7 +68,18 @@ export default function Navbar() {
                 </div>
                 <div className="flex items-center space-x-3 group cursor-pointer">
                   <div className="relative">
-                    <img src={user.photoURL || ''} alt="" className="w-9 h-9 md:w-10 md:h-10 rounded-xl border border-white/10 group-hover:border-teal-500/50 transition-colors shadow-xl" />
+                    {user.photoURL ? (
+                      <img 
+                        src={user.photoURL} 
+                        referrerPolicy="no-referrer"
+                        alt={user.displayName || "User"} 
+                        className="w-9 h-9 md:w-10 md:h-10 rounded-xl border border-white/10 group-hover:border-teal-500/50 transition-colors shadow-xl" 
+                      />
+                    ) : (
+                      <div className="w-9 h-9 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-teal-500 to-purple-600 flex items-center justify-center border border-white/10 text-white font-black text-xs uppercase shadow-xl group-hover:border-teal-500/50 transition-colors">
+                        {(user.displayName || user.email || 'U').charAt(0)}
+                      </div>
+                    )}
                     <div className="absolute -bottom-1 -right-1 w-3 h-3 md:w-4 md:h-4 bg-[#030408] rounded-lg flex items-center justify-center border border-white/10">
                       <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-green-500 rounded-full" />
                     </div>
