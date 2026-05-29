@@ -780,14 +780,13 @@ export default function Interview() {
               </div>
             </div>
 
-            <div className="mt-6 pt-6 border-t border-white/5 group shrink-0">
-              <button
-                onClick={finishInterview}
-                className="w-full py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl flex items-center justify-center gap-3 transition-all duration-300 group-hover:border-teal-500/30"
+            <div className="mt-6 pt-6 border-t border-white/5 shrink-0">
+              <div
+                className="w-full py-4 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-center gap-3"
               >
-                <Target className="w-4 h-4 text-slate-500 group-hover:text-teal-400 transition-colors" />
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-white transition-colors">Target Evaluation</span>
-              </button>
+                <Target className="w-4 h-4 text-slate-500" />
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Target Evaluation</span>
+              </div>
             </div>
           </div>
         </aside>

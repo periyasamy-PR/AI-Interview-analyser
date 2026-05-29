@@ -19,7 +19,7 @@ const ai = new GoogleGenAI({
 
 const MODELS = {
   FLASH: "gemini-3.5-flash",
-  PRO: "gemini-3.1-pro-preview",
+  PRO: "gemini-3.5-flash",
 };
 
 // Helper function to call generateContent with retry and backup fallback mechanisms
