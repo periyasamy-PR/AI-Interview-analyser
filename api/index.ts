@@ -68,16 +68,21 @@ app.post("/api/generateQuestion", async (req, res) => {
     const { role, company, difficulty, history, focusAreas } = req.body;
     const focusStr = focusAreas && focusAreas.length > 0 ? `Please focus specifically on these areas: ${focusAreas.join(', ')}.` : '';
     
-    const prompt = `You are a professional interviewer at ${company}. You are interviewing a candidate for a ${difficulty} level ${role} position.
+    const prompt = `You are an expert professional interviewer at ${company}. You are conducting a highly realistic, interactive, and structured interview for a ${difficulty} level ${role} position.
     ${focusStr}
     
     Current Interview History:
-    ${history.map((h: any) => `${h.role === 'ai' ? 'Interviewer' : 'Candidate'}: ${h.text}`).join('\n')}
+    ${history && history.length > 0 
+      ? history.map((h: any) => `${h.role === 'ai' ? 'Interviewer' : 'Candidate'}: ${h.text}`).join('\n')
+      : '(None - start the interview with your very first question)'}
     
-    Based on the history, ask the NEXT relevant interview question. 
-    It should be one of: HR, Technical, or Behavioral.
-    Be concise, professional, and slightly challenging.
-    Only output the question text.`;
+    CRITICAL INSTRUCTIONS:
+    1. Review the interview history carefully.
+    2. Identify all questions that you (Interviewer) have ALREADY asked previously in the history.
+    3. **DO NOT REPEAT** any question that has already been asked or is extremely similar to past questions. Asking the same question twice destroys the realism of the interview.
+    4. Acknowledge the candidate's last answer in a progressive way (if applicable) and ask a completely NEW, DISTINCT, and sequential question to move the interview forward.
+    5. The question should be clean, concise, professional, slightly challenging, and belong to: HR, Technical, or Behavioral categories suitable for ${difficulty} level ${role}.
+    6. Output ONLY the next interviewer question. Do not include any meta-text, markdown tags, introduction or prefix.`;
 
     const result = await generateContentWithRetry({
       model: MODELS.FLASH,
